@@ -1,6 +1,7 @@
 import os
 import re
 import xml.etree.ElementTree as et
+import random
 
 #Gets all subdirectories in a folder
 def list_folders(directory):
@@ -56,7 +57,7 @@ def parser():
                 elif event == "end" and elem.tag == "review":
                     rating = float(elem.find("rating").text.strip())
                     title = elem.find("title").text.strip()
-                    text = elem.find("review_text").text.strip()
+                    text = elem.find("review_text").text.strip().replace('\n', ' ')
 
                     dataset.append({
                         "rating": rating,
@@ -80,5 +81,6 @@ def parser():
     return dataset
          
 dataset = parser()
+random.shuffle(dataset)
 print(dataset[:5])
 print(len(dataset))
