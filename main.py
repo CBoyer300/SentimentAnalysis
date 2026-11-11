@@ -55,10 +55,12 @@ def parser():
 
                 elif event == "end" and elem.tag == "review":
                     rating = float(elem.find("rating").text.strip())
+                    title = elem.find("title").text.strip()
                     text = elem.find("review_text").text.strip()
 
                     dataset.append({
                         "rating": rating,
+                        "title": title,
                         "text": text
                     })
 
