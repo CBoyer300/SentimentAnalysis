@@ -4,6 +4,10 @@ import xml.etree.ElementTree as et
 import random
 from collections import Counter
 
+#Hyperparameters
+k = 5 # k most frequent words to keep
+maxReviewLength = 1200 #Most amount of words in a review to process
+
 #Gets all subdirectories in a folder
 def list_folders(directory):
     folders = [entry.path for entry in os.scandir(directory) if entry.is_dir()]
@@ -97,14 +101,17 @@ def parser():
                     #Count frequency of a given word
                     word_counts.update(text)
 
-                    text = " ".join(text)
-
-                    dataset.append({
-                        "rating": rating,
-                        "title": title,
-                        "text": text,
-                        "Sentiment": sentiment
-                    })
+                    if len(text) <= maxReviewLength:
+                        text = " ".join(text)
+                        text = '[BOS] ' + text + ' [EOS]'
+                        while len(text) < maxReviewLength:
+                            text += ' [PAD]'
+                        dataset.append({
+                            "rating": rating,
+                            "title": title,
+                            "text": text,
+                            "Sentiment": sentiment
+                        })
 
                     root.remove(elem)
                     elem.clear()
@@ -134,7 +141,6 @@ random.shuffle(dataset)
 #Adds k most frequent words to dataset, others become [UNK]
 #encoding = .get(vocab[word], vocab[UNK]), gets the encoding for a word 
 #or uses unknown if not found
-k = 5
 stoi = {
     word: i + 4
     for i, (word, count) in enumerate(word_counts.items())
@@ -153,5 +159,6 @@ def encode(s):
 def decode(token):
     return ''.join(itos[i] for i in token)
 
-
+print(len(dataset))
+print(dataset[:10])
 
