@@ -2,6 +2,7 @@ import os
 import re
 import xml.etree.ElementTree as et
 import random
+from collections import Counter
 
 #Gets all subdirectories in a folder
 def list_folders(directory):
@@ -12,11 +13,18 @@ def list_folders(directory):
 
     return pos, neg
 
+#Get stop words
+stopWords = ''
+with open('sorted_data/stopwords', 'r') as f:
+    stopWords = f.read()
+    
+stopWords = stopWords.replace('\n', ' ').split()
+
 #Get all subdirectories for sorted_data, seperate and combined
 posFolders, negFolders = list_folders("sorted_data")
 allFolders = posFolders + negFolders
 
-#To clean up ampersands
+#To clean up invalid text
 def clean_xml(text):
     # Escape unescaped ampersands
     text = re.sub(
@@ -36,11 +44,29 @@ def clean_xml(text):
 
     return text
 
+#Vocabulary for tokenizer
+#Set of words, counts up by 1
+#Encoding = [vocab[word] for word in tokens]
+#Keep k most frequent words, will run into misspellings and abrevs
+
+#padding
+#unknown words
+#Beginning of seq
+#end of seq
+vocab = {
+    "[PAD]": 0,
+    "[UNK]": 1,
+    "[BOS]": 2,
+    "[EOS]": 3
+}
+
+word_counts = Counter()
+
 #Parse a file to get a list of all the reviews in a file and their ratings, ignore everything else for now
 def parser():
     dataset = []
 
-    for file in allFolders:
+    def processFileType(sentiment):
         print(file)
         xml = et.XMLPullParser(events=("start", "end"))
         xml.feed("<reviews>")
@@ -57,12 +83,21 @@ def parser():
                 elif event == "end" and elem.tag == "review":
                     rating = float(elem.find("rating").text.strip())
                     title = elem.find("title").text.strip()
-                    text = elem.find("review_text").text.strip().replace('\n', ' ')
+
+                    #Get overall text and remove stopwords
+                    text = elem.find("review_text").text.strip().replace('\n', ' ').lower().split()
+                    text = [item for item in text if item not in stopWords]
+
+                    #Count frequency of a given word
+                    word_counts.update(text)
+
+                    text = " ".join(text)
 
                     dataset.append({
                         "rating": rating,
                         "title": title,
-                        "text": text
+                        "text": text,
+                        "Sentiment": sentiment
                     })
 
                     root.remove(elem)
@@ -78,9 +113,25 @@ def parser():
         xml.close()
         process_events()
 
+    for file in posFolders:
+            processFileType('positive')
+    for file in negFolders:
+        processFileType('negative')
+
     return dataset
-         
+
+#Dataset is array of dictionaries
+#Rating: num, title: string, text: string, sentiment: string
 dataset = parser()
 random.shuffle(dataset)
+
+vocab = {
+    word: i + 4
+    for i, (word, count) in enumerate(word_counts.items())
+    if count >= 4
+}
+
 print(dataset[:5])
-print(len(dataset))
+print(len(word_counts))
+print(word_counts.most_common(20))
+print(len(vocab))
