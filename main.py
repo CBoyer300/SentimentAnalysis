@@ -44,7 +44,7 @@ def clean_xml(text):
 
     return text
 
-#Vocabulary for tokenizer
+#Vocabulary for tokenizer and reverse
 #Set of words, counts up by 1
 #Encoding = [vocab[word] for word in tokens]
 #Keep k most frequent words, will run into misspellings and abrevs
@@ -53,11 +53,17 @@ def clean_xml(text):
 #unknown words
 #Beginning of seq
 #end of seq
-vocab = {
+stoi = {
     "[PAD]": 0,
     "[UNK]": 1,
     "[BOS]": 2,
     "[EOS]": 3
+}
+itos = {
+    0: "[PAD]",
+    1: "[UNK]",
+    2: "[BOS]",
+    3: "[EOS]"
 }
 
 word_counts = Counter()
@@ -125,13 +131,27 @@ def parser():
 dataset = parser()
 random.shuffle(dataset)
 
-vocab = {
+#Adds k most frequent words to dataset, others become [UNK]
+#encoding = .get(vocab[word], vocab[UNK]), gets the encoding for a word 
+#or uses unknown if not found
+k = 5
+stoi = {
     word: i + 4
     for i, (word, count) in enumerate(word_counts.items())
-    if count >= 4
+    if count >= k
+}
+itos = {
+    i + 4: word
+    for i, (word, count) in enumerate(word_counts.items())
+    if count >= k
 }
 
-print(dataset[:5])
-print(len(word_counts))
-print(word_counts.most_common(20))
-print(len(vocab))
+#Encode/decode a string of words
+def encode(s):
+    return [stoi.get(c, stoi["[UNK]"]) for c in s]
+
+def decode(token):
+    return ''.join(itos[i] for i in token)
+
+
+
