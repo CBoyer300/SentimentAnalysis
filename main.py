@@ -11,6 +11,14 @@ import re
 import random
 import xml.etree.ElementTree as ET
 from collections import Counter
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+from torch.nn import functional as F # type: ignore
+from torch.utils.data import Dataset, DataLoader # type: ignore
+import numpy as np # type: ignore
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print("Using: ", device)
 
 # ---------------------------------------------------------------------------
 # Hyperparameters / config
@@ -23,7 +31,21 @@ MAX_LEN = 512             # final sequence length, including [BOS] and [EOS]
 REMOVE_STOPWORDS = False  # negations/"but" are always kept even if True
 TRAIN_FRAC = 0.8
 VAL_FRAC = 0.1            # remainder becomes the test set
-SEED = 42
+SEED = 1337
+
+torch.manual_seed(SEED)
+
+#Transformer hyperparameters
+# Hyperparameters:
+batch_size = 32
+max_iters = 5000
+eval_interval = 100
+learning_rate = 3e-4
+eval_iters = 200
+n_embd = 64
+n_head = 2
+n_layers = 2
+dropout = 0.2
 
 PAD, UNK, BOS, EOS = "[PAD]", "[UNK]", "[BOS]", "[EOS]"
 SPECIAL_TOKENS = [PAD, UNK, BOS, EOS]  # IDs 0, 1, 2, 3
@@ -185,6 +207,25 @@ def encode_review(tokens, stoi):
     ids = ids + [stoi[PAD]] * n_pad
     return ids, attention_mask
 
+# ---------------------------------------------------------------------------
+# Transformer + related classes
+# ---------------------------------------------------------------------------
+
+class ReviewTransformer(nn.Module):
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+
+def to_tensors(split):
+    ids = torch.tensor([r["input_ids"] for r in split])
+    mask = torch.tensor([r["attention_mask"] for r in split])
+    labels = torch.tensor([r["label"] for r in split], dtype=torch.float)
+    return ids, mask, labels
+
+def get_batch(data):
+    ids, mask, labels = data
+    ix = torch.randint(len(ids), (batch_size,))
+    return ids[ix], mask[ix], labels[ix]
 
 # ---------------------------------------------------------------------------
 # Main
@@ -196,6 +237,7 @@ def main():
     train, val, test = split_dataset(dataset)
 
     stoi, itos = build_vocab(train)  # train only, so val/test words don't leak in
+    vocab_size = len(stoi)
 
     for split in (train, val, test):
         for review in split:
@@ -203,9 +245,11 @@ def main():
                 review["tokens"], stoi
             )
 
-    print(f"Reviews: {len(dataset)} "
-          f"(train {len(train)}, val {len(val)}, test {len(test)})")
-    print(f"Vocab size: {len(stoi)}")
+    train_data = to_tensors(train)
+    val_data = to_tensors(val)
+
+    print(f"Reviews: {len(dataset)} " f"(train {len(train)}, val {len(val)}, test {len(test)})")
+    print(f"Vocab size: {vocab_size}")
     sample = train[0]
     print(f"Sample label: {sample['label']}, rating: {sample['rating']}")
     print(decode(sample["input_ids"], itos))
