@@ -1,11 +1,3 @@
-"""
-Preprocessing for a sentiment-analysis transformer.
-
-Pipeline:
-    parse review files -> tokenize -> split train/val/test
-    -> build vocab (train only) -> encode + pad
-"""
-
 import os
 import re
 import random
@@ -14,8 +6,6 @@ from collections import Counter
 import torch # type: ignore
 import torch.nn as nn # type: ignore
 from torch.nn import functional as F # type: ignore
-from torch.utils.data import Dataset, DataLoader # type: ignore
-import numpy as np # type: ignore
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using: ", device)
@@ -211,11 +201,99 @@ def encode_review(tokens, stoi):
 # Transformer + related classes
 # ---------------------------------------------------------------------------
 
+class FeedForward(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class Head(nn.Module):
+    def __init__(self, n_embd, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, key_mask):
+        # x: (B, T, C), key_mask: (B, T) bool, True = real token
+        k = self.key(x)
+        q = self.query(x)
+
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5   # (B, T, T)
+        wei = wei.masked_fill(~key_mask[:, None, :], float("-inf"))
+        wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
+
+        return wei @ self.value(x)
+
+
+class MultiHeadedAttention(nn.Module):
+    def __init__(self, n_embd, num_heads):
+        super().__init__()
+        head_size = n_embd // num_heads
+        self.heads = nn.ModuleList(Head(n_embd, head_size) for _ in range(num_heads))
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, key_mask):
+        out = torch.cat([h(x, key_mask) for h in self.heads], dim=-1)
+        return self.dropout(self.proj(out))
+
+
+class Block(nn.Module):
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        self.sa = MultiHeadedAttention(n_embd, n_head)
+        self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x, key_mask):
+        x = x + self.sa(self.ln1(x), key_mask)
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
+
 class ReviewTransformer(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
-        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd, padding_idx=0)
+        self.position_embedding_table = nn.Embedding(MAX_LEN, n_embd)
+        self.drop = nn.Dropout(dropout)
+        self.blocks = nn.ModuleList(Block(n_embd, n_head) for _ in range(n_layers))
+        self.ln_f = nn.LayerNorm(n_embd)
+        self.classifier = nn.Linear(n_embd, 1)
 
+    def forward(self, idx, attention_mask, labels=None):
+        B, T = idx.shape
+        key_mask = attention_mask.bool()
+
+        pos = torch.arange(T, device=idx.device)
+        x = self.token_embedding_table(idx) + self.position_embedding_table(pos)
+        x = self.drop(x)
+
+        for block in self.blocks:
+            x = block(x, key_mask)
+        x = self.ln_f(x)
+
+        # masked mean pooling over real tokens only
+        m = attention_mask.unsqueeze(-1).to(x.dtype)           # (B, T, 1)
+        pooled = (x * m).sum(dim=1) / m.sum(dim=1).clamp(min=1)
+
+        logits = self.classifier(pooled).squeeze(-1)           # (B,)
+        loss = None
+        if labels is not None:
+            loss = F.binary_cross_entropy_with_logits(logits, labels)
+        return logits, loss
 def to_tensors(split):
     ids = torch.tensor([r["input_ids"] for r in split])
     mask = torch.tensor([r["attention_mask"] for r in split])
