@@ -206,14 +206,13 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(n_embd, 4 * n_embd),
-            nn.ReLU(),
+            nn.ReLU(), #Try GELU after testint ReLU
             nn.Linear(4 * n_embd, n_embd),
             nn.Dropout(dropout),
         )
 
     def forward(self, x):
         return self.net(x)
-
 
 class Head(nn.Module):
     def __init__(self, n_embd, head_size):
@@ -294,6 +293,7 @@ class ReviewTransformer(nn.Module):
         if labels is not None:
             loss = F.binary_cross_entropy_with_logits(logits, labels)
         return logits, loss
+    
 def to_tensors(split):
     ids = torch.tensor([r["input_ids"] for r in split])
     mask = torch.tensor([r["attention_mask"] for r in split])
@@ -303,12 +303,37 @@ def to_tensors(split):
 def get_batch(data):
     ids, mask, labels = data
     ix = torch.randint(len(ids), (batch_size,))
-    return ids[ix], mask[ix], labels[ix]
+    xb = ids[ix].to(device)
+    yb = mask[ix].to(device)
+    zb = labels[ix].to(device)
+    return xb, yb, zb
+
+@torch.no_grad()
+def evaluate(model, data, bs=128):
+    #Set to eval mode
+    model.eval()
+    ids, mask, labels = data
+    n = len(ids)
+    total_loss, correct = 0.0, 0
+    for i in range(0, n, bs):
+        x = ids[i:i + bs].to(device)
+        m = mask[i:i + bs].to(device)
+        y = labels[i:i + bs].to(device)
+        L = int(m.sum(1).max())
+        logits, loss = model(x[:, :L], m[:, :L], y)
+        total_loss += loss.item() * len(y)
+        correct += ((logits > 0).float() == y).sum().item()
+
+    #Set back to training mode
+    model.train()
+    return total_loss / n, correct / n 
+
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
+
     stop_words = load_stopwords(STOPWORDS_PATH)
 
     dataset = load_dataset(DATA_DIR, stop_words)
@@ -316,6 +341,11 @@ def main():
 
     stoi, itos = build_vocab(train)  # train only, so val/test words don't leak in
     vocab_size = len(stoi)
+
+    t = ReviewTransformer(vocab_size).to(device)
+    print(f"{sum(p.numel() for p in t.parameters())} parameters")
+
+    optimizer = torch.optim.AdamW(t.parameters(), lr=learning_rate)
 
     for split in (train, val, test):
         for review in split:
@@ -331,6 +361,33 @@ def main():
     sample = train[0]
     print(f"Sample label: {sample['label']}, rating: {sample['rating']}")
     print(decode(sample["input_ids"], itos))
+
+    #Sample batch -> logits/loss
+    xb, yb, zb = get_batch(train_data)
+    logits, loss = t(xb, yb, zb)
+    print(logits)
+    print(logits.size())
+    print(loss)
+
+    best_val = float('inf')
+    running = 0.0
+
+    for step in range(max_iters):
+        if step % eval_interval == 0 or step == max_iters - 1:
+            val_loss, val_acc = evaluate(t, val_data)
+            print(f"step {step}: train {running / eval_interval:.4f} | " f"val {val_loss:.4f} | val acc {val_acc:.3f}")
+            running = 0.0
+            if val_loss < best_val:
+                best_val = val_loss
+                torch.save({"model": t.state_dict(), "stoi": stoi, "itos": itos}, "best.pt")
+
+        xb, yb, zb = get_batch(train_data)
+        logits, loss = t(xb, yb, zb)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+        
 
     return train, val, test, stoi, itos
 
