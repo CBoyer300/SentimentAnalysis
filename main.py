@@ -381,11 +381,15 @@ def main():
                 best_val = val_loss
                 torch.save({"model": t.state_dict(), "stoi": stoi, "itos": itos}, "best.pt")
 
-        xb, yb, zb = get_batch(train_data)
-        logits, loss = t(xb, yb, zb)
+        #Gets one batch of training data and slices off extra padding
+        x, m, y = (t.to(device) for t in get_batch(train_data))
+        L = int(m.sum(1).max())
+        _, loss = t(x[:, :L], m[:, :L], y)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(t.parameters(), 1.0)
         optimizer.step()
+        running += loss.item()
 
         
 
