@@ -27,13 +27,13 @@ torch.manual_seed(SEED)
 
 #Transformer hyperparameters
 # Hyperparameters:
-batch_size = 32
-max_iters = 5000
-eval_interval = 100
-learning_rate = 3e-4
+batch_size = 64
+max_iters = 4000
+eval_interval = 200
+learning_rate = 1e-3
 eval_iters = 200
-n_embd = 64
-n_head = 2
+n_embd = 128
+n_head = 4
 n_layers = 2
 dropout = 0.2
 
